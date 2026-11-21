@@ -1,0 +1,15 @@
+{
+  "home_name": "우리 집",
+  "complex_id": "100118",
+  "complex_name": "호반써밋동탄",
+  "secure_cookie": true,
+  "session_refresh_minutes": 15,
+  "device_names": {
+    "lights/1/1": "거실 메인 조명",
+    "lights/1/2": "거실 간접 조명",
+    "heating/1/1": "거실",
+    "heating/1/2": "안방",
+    "ventilation/0/1": "전열교환기",
+    "hybrid/0/1": "주방"
+  }
+}

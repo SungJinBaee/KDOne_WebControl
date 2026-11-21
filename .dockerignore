@@ -1,0 +1,14 @@
+.venv
+.tools
+.git
+.vscode
+.pytest_cache
+__pycache__
+**/__pycache__
+data
+artifacts
+.env
+.env.*
+tests
+config
+*.pyc

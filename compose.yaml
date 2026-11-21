@@ -1,0 +1,18 @@
+services:
+  kdone:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8088:8088"
+    environment:
+      KDONE_CONFIG_DIR: /app/config
+      TZ: Asia/Seoul
+    volumes:
+      - kdone-data:/app/data
+      - ./config:/app/config
+      - ./static:/app/static:ro
+      - ./templates:/app/templates:ro
+    init: true
+    stop_grace_period: 45s
+volumes:
+  kdone-data:

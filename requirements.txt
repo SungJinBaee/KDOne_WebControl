@@ -1,0 +1,2 @@
+-e ./upstream/KDOne
+truststore==0.10.4
