@@ -376,6 +376,33 @@ class HomeService:
             return {"message": "제어 요청을 전송했습니다.", "warning": warning,
                     "devices": self.cache.get(clean["family"], [])}
 
+    def energy_usage(self, category, period, selected, compare="0"):
+        from energy_usage import CATEGORIES, query_ranges, normalize_series, demo_payload
+        try:
+            ranges = query_ranges(category, period, selected, compare)
+        except ValueError as error:
+            raise HomeError(str(error)) from None
+        with self.lock:
+            if not self.connected:
+                raise HomeError("기기 연결 후 사용량을 조회하세요.", 409)
+            result = {"category": category, "name": CATEGORIES[category], "period": period,
+                      "selected": selected, "demo": self.demo, "updated": time.time()}
+            for label, start, end in ranges:
+                if self.demo:
+                    payload = demo_payload(category, start, end, period)
+                else:
+                    # Reuse current tokens. A usage error must not initiate login or certification.
+                    fields = {"Complex": self.api.complex_id, "Access_Token": self.api.access_token,
+                              "Refresh_Token": self.api.refresh_token, "Category_Type": category,
+                              "Query_Type": period, "Start_Time": start.isoformat()+"T00:00:00",
+                              "End_Time": end.isoformat()+"T23:59:59"}
+                    payload = self._network(lambda: self.api._send_request("/used/list", fields))
+                try:
+                    result[label] = normalize_series(payload, start, end, period)
+                except ValueError as error:
+                    raise HomeError(str(error), 502) from None
+            return result
+
     def elevator(self):
         with self.lock:
             if not self.connected:

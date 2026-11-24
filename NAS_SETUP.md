@@ -1,5 +1,35 @@
 # KDOne 웹 관리 · NAS 배포
 
+## 사용량 메뉴 업데이트
+
+### 저장·검토 방식으로 전환
+
+중복 검토 처리 수정은 `usage_archive.py`와 화면의 `templates/index.html`, `static/app.js`를 함께 적용합니다. Web Station에는 최신 화면 ZIP을 적용합니다. 사유 입력 후 기존 값 유지 또는 새 값 채택을 누르면 동일 후보 건을 함께 처리하고 원본 이력은 남깁니다. 확정값이 이미 다른 값으로 수정된 경우에는 기존 충돌 보호를 유지하므로 목록 위 오류를 확인하고 일별 이력을 조회하세요.
+
+조회·집계 시점의 한국 날짜 기준 오늘과 어제는 20% 변동 보류에서 제외합니다. 직접 수정값·단위·누락·숫자 오류 검토는 그대로 유지하며, 날짜가 이틀 이상 지난 기록에 20% 기준을 적용합니다. 이 정책 수정만 적용할 때는 `usage_archive.py`를 교체하고 재빌드하면 됩니다. 화면 안내 문구는 최신 화면 ZIP에 포함됩니다.
+
+최신 NAS ZIP에서 `usage_archive.py`(신규), `webapp.py`, `energy_usage.py`, `Dockerfile`, `templates/index.html`, `static/app.js`, `static/app.css`를 적용하세요. Web Station에는 최신 화면 ZIP 전체를 적용하며 `api.php`도 반드시 교체합니다. 기존 계정 설정, Compose 데이터 볼륨과 예약 DB는 유지합니다. 이후 `sudo docker compose up -d --build --force-recreate kdone`로 반영합니다.
+
+실행 중인 API가 기존 세대에 연결되면 2023년부터 현재까지 5종 사용량을 연도별 작업으로 자동 수집합니다. 수집 상태에서 대기·진행·완료·빈 구간·실패를 구분해 확인할 수 있습니다. 서버가 제공하지 않는 기간을 만들어 채우지 않습니다. 실패·빈 구간 재수집 버튼으로 다시 시도합니다. 중간 재시작은 완료한 작업을 유지하고 진행 중이던 구간부터 재개합니다. 최초 수집 중 화면은 일부 기록만 표시할 수 있습니다.
+
+매일 03:00 한국 시간에 어제부터 과거 3일을 재수집합니다. NAS 중지 기간이 길면 마지막 완료한 정기 수집 다음 날부터 누락 구간도 따라잡습니다. 웹 조회 버튼은 선택한 항목의 오늘 포함 3일을 수집한 뒤 저장된 확정값으로 집계합니다. 수집 중에는 최대 45초 대기하며 수집 실패·경합 시에는 사유와 함께 저장된 집계로 표시합니다. 수집 자체는 현재 토큰만 사용하고 로그인·월패드 재인증을 요청하지 않습니다.
+
+20% 이상 절대 변동은 보류하고 검토 대기로 남깁니다. 0→양수·단위 변경·기록 누락·숫자/날짜 오류도 보류합니다. 사유를 입력해 새 값 채택 또는 기존 값 유지를 선택하세요. 잘못된 원본 수치는 바로 채택할 수 없고 직접 수정해야 합니다. 직접 수정하려면 항목과 날짜 선택 → 이력 조회 → 값·단위·사유 입력 → 수정값 저장 순서입니다. 수정값은 이후 자동 수집으로 바뀌지 않습니다. 월별 값은 일별 수정값을 합산하므로 월 합계를 직접 수정하지 않습니다.
+
+영구 DB는 컨테이너의 `/app/data/usage.sqlite3`이며 기존 Compose의 `kdone-data` 볼륨에 저장됩니다. `docker compose down -v`로 볼륨을 삭제하면 사용량과 예약 이력도 사라지므로 기존 볼륨을 유지합니다. 데모는 별도 `demo-usage.sqlite3`를 사용합니다. 화면의 저장 데이터·이력 다운로드는 확정값·원본 관측값·수정/검토 이력·수집 작업을 CSV ZIP으로 내보냅니다. 전체 환경 복구용 백업은 컨테이너를 중지한 상태에서 데이터 볼륨과 config 폴더를 함께 보관하세요. CSV ZIP은 DB 복원 파일이 아닙니다.
+
+전년 조회가 계속 23일/11월에서 끝나면 실행 중인 이미지가 이전 코드인지 확인하세요. NAS의 `energy_usage.py`를 최신 파일로 교체한 뒤 `sudo docker compose up -d --build --force-recreate kdone`로 재빌드·재생성합니다. Web Station 파일만 교체하면 Python 조회 범위는 변경되지 않습니다.
+
+다음 명령은 인증 요청 없이 현재 컨테이너의 기간 계산만 확인합니다. 출력은 `2025-11-30`이어야 합니다.
+
+```bash
+sudo docker compose exec -T kdone python -c 'from datetime import date; from energy_usage import query_ranges; print(query_ranges("Electricity", "Day", "2026-11", "1", today=date(2026,11,23))[1][2])'
+```
+
+`/volume1/docker/kdone-home/`의 `webapp.py`, `home_service.py`, 새 파일 `energy_usage.py`, `Dockerfile`을 교체하고 `templates/index.html`, `static/app.js`, `static/app.css`도 함께 적용합니다. Web Station 사이트에는 별도 `kdone-webstation.zip`의 `index.html`, `static/`, `api.php`를 함께 덮어씁니다. API 프록시에 `usage` 경로가 추가되어 PHP도 교체해야 합니다. 실제 `config/`와 `data/`는 유지하세요.
+
+프로젝트 폴더에서 `sudo docker compose up -d --build`로 반영하고 시작 로그를 확인합니다. 로그인 후 사용량 메뉴에서 전기 일별 조회부터 확인하고 경동원 앱의 같은 기간 기록과 비교하세요. 이어서 월별·전년 비교와 수도·난방·온수·가스를 확인합니다. 단지의 실사용량 응답은 아직 현장에서 검증해야 합니다. 실패 시 화면 오류만 공유하고 인증 토큰·계정 정보는 공유하지 마세요.
+
 Web Station에서 HTML을 직접 제공하는 분리 구성은 [WEB_STATION_SETUP.md](WEB_STATION_SETUP.md)를 참고하세요.
 화면 ZIP은 `artifacts/kdone-webstation.zip`이며 실제 계정·설정 파일은 포함하지 않습니다.
 
@@ -14,7 +44,7 @@ Web Station에서 HTML을 직접 제공하는 분리 구성은 [WEB_STATION_SETU
    예약 볼륨은 덮어쓰거나 삭제하지 마세요. ZIP에는 `.example.json`만 포함됩니다.
 2. `config/settings.example.json`을 `config/settings.json`으로 복사합니다.
 3. `config/secrets.example.json`을 `config/secrets.json`으로 복사합니다.
-4. `secrets.json`의 `web_admin_password`를 8자 이상으로 설정하고, `web_secret_key`에 무작위 값을 넣습니다.
+4. `secrets.json`의 `web_admin_pin`을 숫자 6자리 문자열로 직접 설정하고, `web_secret_key`에 무작위 값을 넣습니다. 기존 설치는 `web_admin_password` 대신 `web_admin_pin`을 추가하세요. 월패드 `account`와 기존 비밀키는 유지합니다.
    기존 `.env`를 사용했다면 관리자 비밀번호와 비밀키를 이 두 항목으로 옮깁니다.
 5. 컨테이너는 UID 1000으로 실행됩니다. `config` 폴더와 파일에 해당 UID의 읽기·쓰기 권한이 필요합니다.
    SSH에서 프로젝트 폴더를 확인한 뒤 다음처럼 설정할 수 있습니다.
@@ -82,7 +112,7 @@ PC의 HTTP 시험에서는 `false`로 설정합니다.
 
 ```json
 {
-  "web_admin_password": "본인만의-8자이상-비밀번호",
+  "web_admin_pin": "012345",
   "web_secret_key": "생성한-무작위-비밀키",
   "account": {
     "complex_id": "100118",
@@ -110,7 +140,7 @@ PC의 HTTP 시험에서는 `false`로 설정합니다.
 인증은 완료됐지만 파일 저장에 실패하면 화면에 쓰기 권한 안내를 표시합니다.
 `secrets.json`은 비밀번호가 들어 있는 평문 파일이므로 NAS 파일 권한과 백업 접근을 제한하고 공유하지 마세요.
 
-환경 변수 `WEB_ADMIN_PASSWORD`, `WEB_SECRET_KEY`, `WEB_SECURE_COOKIE`를 직접 지정한 경우에는
+환경 변수 `WEB_ADMIN_PIN`, `WEB_SECRET_KEY`, `WEB_SECURE_COOKIE`를 직접 지정한 경우에는
 호환성을 위해 파일보다 우선합니다. 현재 Compose는 이 변수들을 주입하지 않습니다.
 PC에서 파일 설정을 시험할 때는 이전 PowerShell 세션에 설정한 변수가 남아 있지 않은지 확인하세요.
 
@@ -126,7 +156,7 @@ Windows 직접 실행도 프로젝트의 `config`를 사용합니다. 다른 경
 1. PC의 `artifacts/kdone-home-nas.zip`을 NAS File Station으로 업로드합니다.
 2. `/volume1/docker/kdone-home`에 압축을 풉니다. 이 폴더 바로 아래에 `compose.yaml`과 `Dockerfile`이 있어야 합니다.
 3. 위 외부 설정 절대로 `config/settings.json`, `config/secrets.json`을 만들고 관리자 비밀번호·비밀키를 설정합니다.
-   관리자 비밀번호는 8자 이상, 비밀키는 아래 생성 명령으로 만든 값을 사용합니다.
+   관리자 PIN은 숫자 6자리 문자열, 비밀키는 아래 생성 명령으로 만든 값을 사용합니다.
 4. Container Manager → 프로젝트 → 생성에서 이름을 `kdone-home`, 경로를 위 폴더로 지정하고
    기존 `compose.yaml`을 사용하여 빌드·시작합니다. 설정을 찾지 못하면 config 파일 이름·권한·마운트 위치를 확인합니다.
 5. Web Station 웹 포털에서 컨테이너의 8088 서비스로 연결하거나, 아래 HTTPS 역방향 프록시를 설정합니다.
@@ -201,8 +231,8 @@ Python 서비스를 계속 실행하고 **같은 주소**로 화면과 `/api/`�
 실제 기기 연결:
 
 ```powershell
-# 예시 문구 대신 본인만 아는 8자 이상의 별도 관리자 비밀번호를 입력하세요.
-$env:WEB_ADMIN_PASSWORD = '본인의-웹관리자-비밀번호'
+# 아래 예시 대신 본인만 아는 숫자 6자리 PIN을 입력하세요.
+$env:WEB_ADMIN_PIN = '012345'
 $env:WEB_SECURE_COOKIE = '0'
 .\.venv\Scripts\python.exe webapp.py
 ```
@@ -287,7 +317,7 @@ NAS에서 Python **3.12 이상**을 별도로 확보한 뒤 NAS 안에서 가상
 cd /volume1/apps/kdone-home
 python3.12 -m venv .venv
 .venv/bin/python -m pip install -r requirements-web.txt
-export WEB_ADMIN_PASSWORD='본인의-웹관리자-비밀번호'
+export WEB_ADMIN_PIN='012345' # 본인의 숫자 6자리 PIN으로 변경
 export WEB_SECRET_KEY='생성한-무작위-비밀키'
 export WEB_SECURE_COOKIE=1
 export KDONE_DATA_DIR=/volume1/apps/kdone-home/data

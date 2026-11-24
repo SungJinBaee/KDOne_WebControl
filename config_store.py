@@ -57,7 +57,7 @@ class ConfigStore:
             scopes = item.get("scopes", [])
             if not isinstance(scopes, list) or any(scope not in ("read", "control", "timers", "automations") for scope in scopes):
                 raise ConfigError("API 키 권한은 read, control, timers, automations 중 지정하세요.")
-        for key in ("web_admin_password", "web_secret_key"):
+        for key in ("web_admin_pin", "web_admin_password", "web_secret_key"):
             if key in data and not isinstance(data[key], str):
                 raise ConfigError(f"secrets.json의 {key}는 문자열이어야 합니다.")
         account = data.get("account", {})

@@ -3,16 +3,18 @@ import argparse
 import atexit
 import hmac
 import os
+import re
 import secrets
 import threading
 import time
 from datetime import timedelta
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request, session
+from flask import Flask, jsonify, render_template, request, session, send_file
 from home_service import HomeError, HomeService
 from schedules import Schedules
 from config_store import ConfigStore, ConfigError
+from usage_archive import UsageArchive
 
 
 def create_app(config=None, service=None):
@@ -23,7 +25,7 @@ def create_app(config=None, service=None):
     app = Flask(__name__)
     app.config.update(
         SECRET_KEY=os.environ.get("WEB_SECRET_KEY") or private.get("web_secret_key") or secrets.token_hex(32),
-        ADMIN_PASSWORD=os.environ.get("WEB_ADMIN_PASSWORD") or private.get("web_admin_password", ""), DEMO=demo,
+        ADMIN_PIN=os.environ.get("WEB_ADMIN_PIN") or private.get("web_admin_pin", ""), DEMO=demo,
         SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Strict",
         SESSION_COOKIE_SECURE=(os.environ.get("WEB_SECURE_COOKIE") == "1" if "WEB_SECURE_COOKIE" in os.environ
                                else external["secure_cookie"] if store.directory.joinpath("settings.json").exists() else False),
@@ -32,8 +34,8 @@ def create_app(config=None, service=None):
         TEMPLATES_AUTO_RELOAD=demo,
         START_SCHEDULER=True)
     app.config.update(config)
-    if not demo and len(app.config["ADMIN_PASSWORD"]) < 8:
-        raise RuntimeError("config/secrets.json의 web_admin_password 또는 WEB_ADMIN_PASSWORD를 8자 이상으로 설정하세요.")
+    if not demo and (not isinstance(app.config["ADMIN_PIN"], str) or not re.fullmatch(r"[0-9]{6}", app.config["ADMIN_PIN"])):
+        raise RuntimeError("config/secrets.json의 web_admin_pin 또는 WEB_ADMIN_PIN을 숫자 6자리 문자열로 설정하세요.")
     if not demo and store.directory.joinpath("secrets.json").exists() and not private.get("web_secret_key") and not os.environ.get("WEB_SECRET_KEY") and not config.get("SECRET_KEY"):
         raise RuntimeError("config/secrets.json의 web_secret_key에 무작위 비밀키를 설정하세요.")
     home = service or HomeService(demo=demo, config_store=store)
@@ -41,6 +43,8 @@ def create_app(config=None, service=None):
     app.extensions["home"] = home
     app.extensions["jobs"] = jobs
     app.extensions["config_store"] = store
+    archive = UsageArchive(Path(app.config["DATA_DIR"]) / ("demo-usage.sqlite3" if demo or home.demo else "usage.sqlite3"), home)
+    app.extensions["usage_archive"] = archive
     failures = {}
     rate_lock = threading.Lock()
     if app.config["START_SCHEDULER"]:
@@ -50,6 +54,9 @@ def create_app(config=None, service=None):
             atexit.register(home.stop_maintenance)
         jobs.start()
         atexit.register(jobs.close)
+        if not home.demo:
+            archive.start()
+            atexit.register(archive.close)
 
     @app.before_request
     def protect():
@@ -126,10 +133,10 @@ def create_app(config=None, service=None):
             attempts = [t for t in failures.get(address, []) if t > now - 300]
             if len(attempts) >= 10:
                 raise HomeError("로그인 시도가 많습니다. 5분 뒤 다시 시도해 주세요.", 429)
-            supplied = request.get_json().get("password", "")
-            if not isinstance(supplied, str) or not hmac.compare_digest(supplied.encode(), app.config["ADMIN_PASSWORD"].encode()):
+            supplied = request.get_json().get("pin", "")
+            if not isinstance(supplied, str) or not re.fullmatch(r"[0-9]{6}", supplied) or not hmac.compare_digest(supplied.encode(), app.config["ADMIN_PIN"].encode()):
                 failures[address] = attempts + [now]
-                raise HomeError("관리자 비밀번호를 확인해 주세요.", 401)
+                raise HomeError("6자리 PIN을 확인해 주세요.", 401)
             failures.pop(address, None)
         session.clear()
         session.update(admin=True, csrf=secrets.token_urlsafe(32))
@@ -148,6 +155,43 @@ def create_app(config=None, service=None):
     @app.get("/api/settings")
     def settings_info():
         return jsonify(store.public())
+
+    @app.get("/api/usage")
+    def usage_info():
+        return jsonify(archive.query(request.args.get("category"), request.args.get("period"),
+                                         request.args.get("selected"), request.args.get("compare", "0")))
+
+    @app.get("/api/usage/status")
+    def usage_status():
+        return jsonify(archive.status())
+
+    @app.get("/api/usage/reviews")
+    def usage_reviews():
+        return jsonify(items=archive.reviews())
+
+    @app.get("/api/usage/history")
+    def usage_history():
+        return jsonify(archive.history(request.args.get('category'),request.args.get('day')))
+
+    @app.get("/api/usage/export")
+    def usage_export():
+        return send_file(archive.export(),mimetype='application/zip',as_attachment=True,download_name='kdone-usage-export.zip')
+
+    @app.post("/api/usage/refresh")
+    def usage_refresh():
+        return jsonify(archive.refresh(request.get_json().get('category')))
+
+    @app.post("/api/usage/retry")
+    def usage_retry():
+        return jsonify(archive.retry())
+
+    @app.post("/api/usage/edit")
+    def usage_edit():
+        return jsonify(archive.edit(request.get_json()))
+
+    @app.post("/api/usage/resolve")
+    def usage_resolve():
+        return jsonify(archive.resolve(request.get_json()))
 
     @app.post("/api/connection/saved/request")
     def saved_request():

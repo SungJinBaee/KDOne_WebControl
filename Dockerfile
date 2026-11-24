@@ -6,7 +6,7 @@ COPY requirements.txt requirements-web.txt ./
 RUN pip install --no-cache-dir -r requirements-web.txt \
     && useradd --uid 1000 --create-home homeapp \
     && mkdir /app/data && chown homeapp:homeapp /app/data
-COPY home_service.py schedules.py webapp.py config_store.py ./
+COPY home_service.py schedules.py webapp.py config_store.py energy_usage.py usage_archive.py ./
 COPY templates ./templates
 COPY static ./static
 USER homeapp

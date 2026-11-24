@@ -29,7 +29,7 @@ def test_external_web_password_and_public_settings_hide_secrets(tmp_path):
     config = tmp_path / "config"
     config.mkdir()
     write(config / "settings.json", {"secure_cookie": False})
-    private = {"web_admin_password": "long-private-password", "web_secret_key": "private-session-key",
+    private = {"web_admin_pin": "012345", "web_secret_key": "private-session-key",
                "account": {"username": "PRIVATE_USER", "password": "PRIVATE_PASSWORD", "app_certify": "PRIVATE_CODE"}}
     write(config / "secrets.json", private)
     app = create_app({"TESTING": True, "DEMO": False, "CONFIG_DIR": str(config), "DATA_DIR": str(tmp_path / "data"), "START_SCHEDULER": False})
@@ -37,11 +37,11 @@ def test_external_web_password_and_public_settings_hide_secrets(tmp_path):
         client = app.test_client()
         assert client.get("/api/settings").status_code == 401
         csrf = client.get("/api/session").json["csrf"]
-        response = client.post("/api/login", json={"password": private["web_admin_password"]}, headers={"X-CSRF-Token": csrf})
+        response = client.post("/api/login", json={"pin": private["web_admin_pin"]}, headers={"X-CSRF-Token": csrf})
         assert response.status_code == 200
         public = client.get("/api/settings")
         assert public.json["saved_account"] and public.json["saved_certification"]
-        for secret in ("PRIVATE_USER", "PRIVATE_PASSWORD", "PRIVATE_CODE", "private-session-key", "long-private-password"):
+        for secret in ("PRIVATE_USER", "PRIVATE_PASSWORD", "PRIVATE_CODE", "private-session-key", "012345"):
             assert secret not in public.text
         assert client.get("/config/secrets.json").status_code == 404
     finally:
@@ -89,11 +89,11 @@ def test_invalid_json_never_echoes_secret(tmp_path):
 
 
 def test_saved_account_write_preserves_web_credentials(tmp_path):
-    write(tmp_path / "secrets.json", {"web_admin_password": "keep", "web_secret_key": "keep-key"})
+    write(tmp_path / "secrets.json", {"web_admin_pin": "keep", "web_secret_key": "keep-key"})
     store = ConfigStore(tmp_path)
     store.save_account({"username": "new-user", "password": "new-password", "access_token": "NEVER_STORE"})
     data = store.secrets()
-    assert data["web_admin_password"] == "keep" and data["web_secret_key"] == "keep-key"
+    assert data["web_admin_pin"] == "keep" and data["web_secret_key"] == "keep-key"
     assert "NEVER_STORE" not in json.dumps(data)
     assert not list(tmp_path.glob(".secrets-*"))
 

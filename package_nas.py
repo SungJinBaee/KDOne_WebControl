@@ -8,7 +8,7 @@ def package():
     files = [root / name for name in (
         "compose.yaml", "Dockerfile", ".dockerignore", ".env.example",
         "requirements.txt", "requirements-web.txt", "home_service.py",
-        "schedules.py", "webapp.py", "config_store.py", "NAS_SETUP.md", "WEB_STATION_SETUP.md", "EXTERNAL_API.md",
+        "schedules.py", "webapp.py", "config_store.py", "energy_usage.py", "usage_archive.py", "NAS_SETUP.md", "WEB_STATION_SETUP.md", "EXTERNAL_API.md",
         "config/settings.example.json", "config/secrets.example.json")]
     for directory in ("templates", "static"):
         files.extend(path for path in (root / directory).rglob("*") if path.is_file())

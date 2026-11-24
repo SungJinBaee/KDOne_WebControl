@@ -31,10 +31,10 @@ $route = $parts['path'] ?? '';
 if (str_starts_with($route, 'external/') && !in_array(strtolower((string)($_SERVER['HTTPS'] ?? '')), ['on', '1'], true)) {
     fail_response(403, '외부 API는 HTTPS 주소로 호출하세요.');
 }
-$getRoutes = ['session', 'settings', 'complexes', 'state', 'schedules', 'external/state', 'external/schedules'];
+$getRoutes = ['session', 'settings', 'complexes', 'state', 'schedules', 'usage', 'usage/status', 'usage/reviews', 'usage/history', 'usage/export', 'external/state', 'external/schedules'];
 $postRoutes = ['login', 'logout', 'control', 'elevator', 'schedules', 'timers', 'automations', 'external/control', 'external/timers',
     'connection/request', 'connection/certify', 'connection/disconnect',
-    'connection/saved/request', 'connection/saved/restore'];
+    'connection/saved/request', 'connection/saved/restore', 'usage/refresh', 'usage/retry', 'usage/edit', 'usage/resolve'];
 $cancel = preg_match('~\A(schedules/[a-f0-9]{32}/cancel|timers/[a-f0-9]{32}/(stop|edit)|automations/[a-f0-9]{32}/(toggle|delete|edit))\z~', $route) === 1;
 $cancel = $cancel || preg_match('~\Aexternal/automations/[a-f0-9]{32}/run\z~', $route) === 1;
 if (!(($method === 'GET' && in_array($route, $getRoutes, true)) ||
@@ -43,7 +43,7 @@ if (!(($method === 'GET' && in_array($route, $getRoutes, true)) ||
 }
 $query = [];
 parse_str($parts['query'] ?? '', $query);
-$allowedQuery = $route === 'state' ? ['refresh'] : ($route === 'complexes' ? ['q'] : []);
+$allowedQuery = $route === 'state' ? ['refresh'] : ($route === 'complexes' ? ['q'] : ($route === 'usage' ? ['category', 'period', 'selected', 'compare'] : ($route === 'usage/history' ? ['category', 'day'] : [])));
 foreach ($query as $key => $value) {
     if (!in_array($key, $allowedQuery, true) || !is_string($value)) {
         fail_response(400, '허용되지 않은 요청 항목입니다.');

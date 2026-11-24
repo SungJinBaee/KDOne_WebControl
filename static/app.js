@@ -8,6 +8,7 @@ const tabs = {overview:["우리 집을 한눈에.","공간의 빛과 온도, 공
 let csrf = "", state = {connected:false, devices:{}}, currentTab = "overview", jobs = [], pendingConfirm = null, timer;
 let initialized = false, loading = false, externalSettings = {};
 const fieldLabels = {OnOffStatus:"조명", PowerStatus:"환기 전원", Heating:"난방 전원", Mode:"모드", WindPower:"풍량", SettingTemp:"설정 온도", GasValveStatus:"가스밸브", InductionStatus:"쿡탑"};
+tabs.usage = ["우리 집 사용량을 한눈에.", "전기·수도·난방·온수·가스 사용량을 기간별로 확인하세요.", "사용량"];
 
 async function api(path, data) {
   const options = {credentials:"same-origin", headers:{}};
@@ -23,7 +24,69 @@ async function api(path, data) {
   return result;
 }
 function toast(message, error=false) { clearTimeout(timer); $("toast").textContent=message; $("toast").classList.toggle("error",error); $("toast").hidden=false; timer=setTimeout(()=>$("toast").hidden=true,6500); }
-function showDialog(id) { const dialog=$(id); if(!dialog.open) dialog.showModal(); }
+let pinBusy = false, previousPinLayout = "";
+function updatePinSubmit() { $("admin-submit").disabled = pinBusy || !/^[0-9]{6}$/.test($("admin-pin").value); }
+$("admin-pin").addEventListener("input", () => {
+  const input = $("admin-pin");
+  input.value = input.value.replace(/[^0-9]/g, "").slice(0,6);
+  $("admin-error").textContent = "";
+  updatePinSubmit();
+});
+function resetPinKeypad() {
+  const input = $("admin-pin");
+  input.value = "";
+  input.readOnly = false;
+  input.removeAttribute("tabindex");
+  input.inputMode = "numeric";
+  const digits = Array.from({length:10}, (_, i) => String(i));
+  for (let i=9; i>0; i--) {
+    const limit = Math.floor(0x100000000/(i+1))*(i+1);
+    let random;
+    do { random = crypto.getRandomValues(new Uint32Array(1))[0]; } while (random >= limit);
+    const j = random % (i+1);
+    [digits[i], digits[j]] = [digits[j], digits[i]];
+  }
+  if (digits.join("") === previousPinLayout) digits.push(digits.shift());
+  previousPinLayout = digits.join("");
+  $("pin-keypad").replaceChildren();
+  for (const value of [...digits, "지우기", "전체 삭제"]) {
+    const button = document.createElement("button");
+    button.type = "button"; button.className = "button secondary"; button.textContent = value;
+    button.addEventListener("click", () => {
+      if (pinBusy) return;
+      const input = $("admin-pin");
+      if (value === "지우기") input.value = input.value.slice(0,-1);
+      else if (value === "전체 삭제") input.value = "";
+      else if (input.value.length < 6) input.value += value;
+      $("admin-error").textContent = "";
+      updatePinSubmit();
+    });
+    $("pin-keypad").append(button);
+  }
+  updatePinSubmit();
+}
+function showDialog(id) {
+  const dialog=$(id);
+  if(!dialog.open) {
+    if(id === "admin-dialog") { resetPinKeypad(); $("admin-error").textContent=""; $("usage-result").replaceChildren(); $("usage-status").textContent="로그인 후 조회하세요."; }
+    dialog.showModal();
+    if(id === "admin-dialog") $("admin-pin").focus();
+  }
+}
+$("admin-dialog").addEventListener("keydown", event => {
+  if(pinBusy || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
+  const input = $("admin-pin");
+  if(event.target === input) return;
+  if(/^[0-9]$/.test(event.key)) {
+    event.preventDefault();
+    if(input.value.length < 6) input.value += event.key;
+  } else if(event.key === "Backspace" || event.key === "Delete") {
+    event.preventDefault();input.value = input.value.slice(0,-1);
+  } else if(event.key === "Enter" && /^[0-9]{6}$/.test(input.value)) {
+    event.preventDefault();$("admin-form").requestSubmit($("admin-submit"));return;
+  } else return;
+  $("admin-error").textContent = "";updatePinSubmit();
+});
 function confirmAction(title, description) {
   $("confirm-title").textContent=title; $("confirm-description").textContent=description; showDialog("confirm-dialog");
   return new Promise(resolve=>pendingConfirm=resolve);
@@ -42,8 +105,10 @@ function setTab(tab) {
   $("overview-panel").hidden=tab!=="overview";
   document.querySelectorAll("[data-section]").forEach(section=>section.hidden=tab!=="overview" && section.dataset.section!==tab);
   $("schedules-panel").hidden=tab!=="schedules"; $("settings-panel").hidden=tab!=="settings";
+  $("usage-panel").hidden=tab!=="usage";
   document.querySelectorAll("[data-tab]").forEach(button=>{const active=button.dataset.tab===tab; button.classList.toggle("active",active); button.setAttribute("aria-current",active?"page":"false");});
   if(tab==="schedules") loadJobs().catch(error=>toast(error.message,true));
+  if(tab==="usage") loadUsageMaintenance();
 }
 document.querySelectorAll("[data-tab]").forEach(button=>button.addEventListener("click",()=>setTab(button.dataset.tab)));
 
@@ -171,9 +236,13 @@ $("certify-form").addEventListener("submit",async event=>{
   finally{button.disabled=false;}
 });
 $("admin-form").addEventListener("submit",async event=>{
-  event.preventDefault();const button=event.submitter;button.disabled=true;
-  try {const result=await api("login",{password:$("admin-password").value});csrf=result.csrf;$("admin-password").value="";$("admin-dialog").close();initialized=true;await refresh();}
-  catch(error){$("admin-error").textContent=error.message;$("admin-password").value="";}finally{button.disabled=false;}
+  event.preventDefault();
+  if(pinBusy || !/^[0-9]{6}$/.test($("admin-pin").value)) return;
+  pinBusy=true;$("admin-pin").readOnly=true;updatePinSubmit();
+  $("pin-keypad").querySelectorAll("button").forEach(button=>button.disabled=true);
+  try {const result=await api("login",{pin:$("admin-pin").value});csrf=result.csrf;$("admin-pin").value="";$("admin-dialog").close();initialized=true;await refresh();}
+  catch(error){resetPinKeypad();$("admin-error").textContent=error.message;}
+  finally{pinBusy=false;$("admin-pin").readOnly=false;$("pin-keypad").querySelectorAll("button").forEach(button=>button.disabled=false);updatePinSubmit();}
 });
 $("logout").addEventListener("click",async()=>{
   if(state.demo){toast("데모에서는 실제 계정에 로그인하지 않습니다.");return;}
@@ -336,6 +405,169 @@ async function bootstrap(){
     $("admin-dialog").close();initialized=true;await refresh();
   }catch(error){toast(error.message,true);}
 }
+const usageToday = new Intl.DateTimeFormat("en-CA", {timeZone:"Asia/Seoul",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
+$("usage-month").value=usageToday.slice(0,7);$("usage-month").max=usageToday.slice(0,7);
+$("usage-year").value=usageToday.slice(0,4);$("usage-year").max=usageToday.slice(0,4);
+$("usage-form").addEventListener("change",()=>{
+  const daily=$("usage-period").value==="Day";
+  $("usage-month-label").hidden=!daily;$("usage-month").required=daily;$("usage-month").disabled=!daily;
+  $("usage-year-label").hidden=daily;$("usage-year").required=!daily;$("usage-year").disabled=daily;
+  $("usage-result").replaceChildren();$("usage-status").textContent="선택한 조건으로 사용량을 조회하세요.";
+});
+$("usage-year").disabled=true;
+function renderUsage(data) {
+  const current=data.current, previous=data.previous;
+  const fmt=value=>value==null?"—":Number(value).toLocaleString("ko-KR",{maximumFractionDigits:3});
+  const rows=new Map();
+  for(const series of [current,previous].filter(Boolean)) {
+    const start=new Date(series.start+"T00:00:00Z");
+    const end=data.period==="Day"?new Date(Date.UTC(start.getUTCFullYear(),start.getUTCMonth()+1,0)):new Date(Date.UTC(start.getUTCFullYear(),11,1));
+    for(let day=new Date(start);day<=end;data.period==="Day"?day.setUTCDate(day.getUTCDate()+1):day.setUTCMonth(day.getUTCMonth()+1)) {
+      const key=day.toISOString().slice(5,data.period==="Day"?10:7);
+      rows.set(key,{date:key});
+    }
+  }
+  for(const point of current.points) {const key=point.date.slice(5);if(rows.has(key)) rows.get(key).current=point;}
+  for(const point of previous?.points||[]) {const key=point.date.slice(5);if(rows.has(key)) rows.get(key).previous=point;}
+  const value=point=>point?.amount==null?"—":`${fmt(point.amount)} ${esc(point.unit)}`;
+  const markedValue=point=>value(point)+(point?.partial?' <small>부분 집계</small>':"")+(point?.pending?' <small>검토 대기</small>':"");
+  const difference=(now,before)=>{
+    if(now?.amount==null || before?.amount==null || !now.unit || now.unit!==before.unit) return "—";
+    const delta=Math.round((now.amount-before.amount)*1e9)/1e9;
+    return Number.isFinite(delta)?`${delta>0?"+":""}${fmt(delta)} ${esc(now.unit)}`:"—";
+  };
+  const total=series=>({amount:series?.total,unit:series?.unit});
+  const tableRows=[...rows.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([,row])=>
+    `<tr><th scope="row">${esc(row.date)}</th>${previous?`<td>${markedValue(row.previous)}</td>`:""}<td>${markedValue(row.current)}</td>${previous?`<td>${difference(row.current,row.previous)}</td>`:""}</tr>`).join("");
+  $("usage-result").innerHTML=`
+    <h3>${esc(data.name)} · ${esc(data.selected)}</h3>
+    <p>${previous?`전년: ${esc(previous.start)} ~ ${esc(previous.end)}<br>`:""}선택연도: ${esc(current.start)} ~ ${esc(current.end)}</p>
+    <p class="muted small">저장된 일별 확정값의 합계입니다. 누락은 —, 일부 날짜만 있으면 부분 집계로 표시합니다. 검토 대기 중에는 기존 확정값을 유지합니다. 전년은 월말·연말까지 표시합니다. 증감은 선택연도 − 전년입니다.</p>
+    ${data.source==="archive"?`<p class="muted small">저장 일수: 선택연도 ${current.stored_days}/${current.expected_days}${current.partial?' (부분 집계)':""}${previous?` · 전년 ${previous.stored_days}/${previous.expected_days}${previous.partial?' (부분 집계)':""}`:""}</p>`:""}
+    <div class="usage-table-wrap"><table class="usage-table">
+      <caption>${esc(data.name)} ${data.period==="Day"?"일별":"월별"} 사용량${data.demo?" (데모 예제)":""}</caption>
+      <thead><tr><th scope="col">기간</th>${previous?'<th scope="col">전년</th>':""}<th scope="col">선택연도</th>${previous?'<th scope="col">증감</th>':""}</tr></thead>
+      <tbody>${tableRows}</tbody>
+      <tfoot><tr><th scope="row">기록된 항목 합계</th>${previous?`<td>${value(total(previous))}</td>`:""}<td>${value(total(current))}</td>${previous?`<td>${difference(total(current),total(previous))}</td>`:""}</tr></tfoot>
+    </table></div>`;
+  if(previous) {
+    const start=new Date(previous.start+"T00:00:00Z");
+    const expectedEnd=data.period==="Day"?new Date(Date.UTC(start.getUTCFullYear(),start.getUTCMonth()+1,0)):new Date(Date.UTC(start.getUTCFullYear(),11,31));
+    if(previous.end!==expectedEnd.toISOString().slice(0,10)) {
+      const warning=document.createElement("p");warning.className="notice";
+      warning.textContent="서버 업데이트가 필요합니다. 전년 조회가 월말·연말 이전에 종료되어 일부 기록이 빠져 있습니다. NAS의 energy_usage.py 교체 후 컨테이너를 다시 빌드하세요.";
+      $("usage-result").prepend(warning);
+    }
+  }
+}
+$("usage-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  if($("usage-submit").disabled) return;
+  const query=new URLSearchParams({category:$("usage-category").value,period:$("usage-period").value,selected:$("usage-period").value==="Day"?$("usage-month").value:$("usage-year").value,compare:$("usage-compare").checked?"1":"0"});
+  const controls=[...$("usage-form").querySelectorAll("input,select,button")], disabled=controls.map(control=>control.disabled);
+  controls.forEach(control=>control.disabled=true);
+  $("usage-result").replaceChildren();$("usage-status").textContent="사용량을 조회하고 있습니다…";
+  try {
+    let refreshMessage="";
+    try {refreshMessage=(await api("usage/refresh",{category:$("usage-category").value})).message;}
+    catch(error) {refreshMessage="최근 3일 재수집 실패. 저장된 값으로 표시합니다: "+error.message;}
+    const data=await api("usage?"+query);
+    if(!initialized) return;
+    renderUsage(data);
+    $("usage-status").textContent=(data.demo?"데모 예제 · ":"")+(data.current.points.length?"조회 완료":"해당 기간에 조회된 기록이 없습니다.");
+    $("usage-status").textContent+=" · "+refreshMessage;
+    loadUsageMaintenance();
+    const series = [["선택 기간",data.current],["전년",data.previous]];
+    for(const [label,item] of series) {
+      const diag=item?.diagnostics;
+      if(!diag) continue;
+      const note=document.createElement("p");note.className="muted small";
+      note.textContent=`${label}: 서버 응답 ${diag.received}건 / 기간 내 ${diag.in_range}건 / 값 누락 ${diag.missing_amount}건. 요청 ${item.start}~${item.end}. 응답 날짜 ${diag.response_start||"없음"}~${diag.response_end||"없음"}. 날짜 원값 ${diag.first_timestamp||"문자열"}. Amount 필드 ${diag.amount_field_present?"있음":"없음"}.`;
+      $("usage-result").prepend(note);
+    }
+  } catch(error) {$("usage-status").textContent=error.message;}
+  finally {controls.forEach((control,index)=>control.disabled=disabled[index]);}
+});
+let usageEditVersion=null, usageEditKey=null, usageMaintenanceGeneration=0;
+const usageNames={Electricity:"전기",Water:"수도",Heating:"난방",Hotwater:"온수",Gas:"가스"};
+$("usage-edit-day").value=usageToday;$("usage-edit-day").max=usageToday;
+async function loadUsageMaintenance(force=false) {
+  if(!initialized) return;
+  const generation=++usageMaintenanceGeneration;
+  const results=await Promise.allSettled([api("usage/status"),api("usage/reviews")]);
+  if(!initialized||generation!==usageMaintenanceGeneration) return;
+  if(results[0].status==="fulfilled") {
+    const info=results[0].value, counts=info.tasks;
+    $("usage-sync-status").textContent=`확정 일별 기록 ${info.readings}건 · 검토 대기 ${info.pending_reviews}건 · 수집 대기 ${counts.pending||0} / 진행 ${counts.running||0} / 완료 ${counts.done||0} / 빈 구간 ${counts.empty||0} / 실패 ${counts.failed||0}. ${info.error||""}`;
+    if(info.failed_tasks.length) $("usage-sync-status").textContent+=" 최근 실패: "+info.failed_tasks.map(item=>`${usageNames[item.category]} ${item.start}~${item.end}: ${item.error}`).join(" / ");
+  } else $("usage-sync-status").textContent=results[0].reason.message;
+  if(results[1].status==="fulfilled") {
+    if(!force&&document.activeElement?.matches('[data-review-reason]'))return;
+    const reasons=new Map([...$("usage-reviews").querySelectorAll('[data-review-reason]')].map(input=>[input.dataset.reviewReason,input.value]));
+    $("usage-reviews").innerHTML=results[1].value.items.map(item=>`<article class="usage-review"><h4>${esc(usageNames[item.category])} · ${esc(item.day||"날짜 해석 불가")}</h4><p>${esc(item.reason)} · 기존 ${esc(item.old_amount??"없음")} ${esc(item.old_unit||"")} → 새 값 ${esc(item.candidate??"없음")} ${esc(item.candidate_unit||"")}</p><details><summary>수집 원본</summary><pre>${esc(item.raw)}</pre></details><label>검토 사유<input data-review-reason="${item.id}" maxlength="500" required></label><button class="button secondary" data-review-id="${item.id}" data-review-action="keep">기존 값 유지</button> <button class="button primary" data-review-id="${item.id}" data-review-action="accept" ${item.valid?"":"disabled"}>새 값 채택</button></article>`).join("")||"<p>검토 대기 항목이 없습니다.</p>";
+    $("usage-reviews").querySelectorAll('[data-review-reason]').forEach(input=>{input.value=reasons.get(input.dataset.reviewReason)||"";});
+  }
+}
+$("usage-sync-status-button").addEventListener("click",loadUsageMaintenance);
+$("usage-export").addEventListener("click",async event=>{
+  const button=event.currentTarget;button.disabled=true;
+  try {
+    const path="usage/export", target=apiBase.includes("?path=")?apiBase+encodeURIComponent(path):apiBase+path;
+    const response=await fetch(target,{credentials:"same-origin"});
+    if(!response.ok)throw new Error("저장 데이터 다운로드에 실패했습니다. 로그인 상태를 확인하세요.");
+    const url=URL.createObjectURL(await response.blob()), link=document.createElement("a");
+    link.href=url;link.download="kdone-usage-export.zip";document.body.append(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),10000);
+  }catch(error){$("usage-edit-status").textContent=error.message;}finally{button.disabled=false;}
+});
+$("usage-retry").addEventListener("click",async event=>{
+  const button=event.currentTarget;button.disabled=true;
+  try {$("usage-edit-status").textContent=(await api("usage/retry",{})).message;await loadUsageMaintenance();}
+  catch(error){$("usage-edit-status").textContent=error.message;}finally{button.disabled=false;}
+});
+async function showStoredUsage() {
+  const query=new URLSearchParams({category:$("usage-category").value,period:$("usage-period").value,selected:$("usage-period").value==="Day"?$("usage-month").value:$("usage-year").value,compare:$("usage-compare").checked?"1":"0"});
+  renderUsage(await api("usage?"+query));
+}
+$("usage-reviews").addEventListener("click",async event=>{
+  const button=event.target.closest("[data-review-id]");if(!button||button.disabled)return;
+  const reason=document.querySelector(`[data-review-reason="${button.dataset.reviewId}"]`);
+  if(!reason.reportValidity()){$("usage-review-status").textContent="검토 사유를 입력한 뒤 처리 버튼을 눌러주세요.";return;}
+  button.disabled=true;
+  try {
+    const result=await api("usage/resolve",{id:Number(button.dataset.reviewId),action:button.dataset.reviewAction,reason:reason.value});
+    $("usage-review-status").textContent=result.message;$("usage-edit-status").textContent=result.message;
+    for(const id of result.resolved_ids||[Number(button.dataset.reviewId)]) document.querySelector(`[data-review-id="${id}"]`)?.closest('.usage-review')?.remove();
+    await loadUsageMaintenance(true);await showStoredUsage();
+  }
+  catch(error){$("usage-review-status").textContent=error.message;$("usage-edit-status").textContent=error.message;}finally{button.disabled=false;}
+});
+function resetUsageEdit(){usageEditVersion=null;usageEditKey=null;$("usage-edit-save").disabled=true;$("usage-history").replaceChildren();$("usage-edit-value").value="";$("usage-edit-unit").value="";}
+$("usage-category").addEventListener("change",resetUsageEdit);$("usage-edit-day").addEventListener("change",resetUsageEdit);
+$("usage-history-button").addEventListener("click",async event=>{
+  if(!$("usage-edit-day").reportValidity())return;
+  const button=event.currentTarget;button.disabled=true;resetUsageEdit();
+  try {
+    const key={category:$("usage-category").value,day:$("usage-edit-day").value};
+    const query=new URLSearchParams(key);
+    const info=await api("usage/history?"+query);
+    if(key.category!==$("usage-category").value||key.day!==$("usage-edit-day").value)return;
+    usageEditKey=key;
+    usageEditVersion=info.current?.version||0;$("usage-edit-value").value=info.current?.amount??"";$("usage-edit-unit").value=info.current?.unit||"";$("usage-edit-save").disabled=false;
+    $("usage-history").innerHTML=`<p>수집 원본 (최근 100건)</p><ul>${info.observations.map(item=>`<li>${esc(new Date(item.observed*1000).toLocaleString("ko-KR",{timeZone:"Asia/Seoul"}))} · ${esc(item.raw)} · ${esc(item.reason)}</li>`).join("")}</ul><p>확정값 변경 이력 (최근 100건)</p><ul>${info.edits.map(item=>`<li>${esc(item.old_amount??"없음")} → ${esc(item.amount)} ${esc(item.unit)} · ${esc(item.origin)} · ${esc(item.reason)}</li>`).join("")}</ul>`;
+    $("usage-edit-status").textContent="이력을 확인한 뒤 값·단위·수정 사유를 입력하세요.";
+  }catch(error){$("usage-edit-status").textContent=error.message;}finally{button.disabled=false;}
+});
+$("usage-edit-form").addEventListener("submit",async event=>{
+  event.preventDefault();if(usageEditVersion===null||!usageEditKey)return;
+  const button=$("usage-edit-save");button.disabled=true;
+  try {
+    const payload={...usageEditKey,amount:$("usage-edit-value").value,unit:$("usage-edit-unit").value,version:usageEditVersion,reason:$("usage-edit-reason").value};
+    usageEditVersion=null;usageEditKey=null;
+    $("usage-edit-status").textContent=(await api("usage/edit",payload)).message;
+    usageEditVersion=null;await showStoredUsage();await loadUsageMaintenance();
+  }catch(error){$("usage-edit-status").textContent=error.message;usageEditVersion=null;}
+});
 $("today").textContent=new Date().toLocaleDateString("ko-KR",{timeZone:"Asia/Seoul",year:"numeric",month:"long",day:"numeric",weekday:"short"});
 bootstrap();
 setInterval(()=>{if(initialized&&!document.hidden&&!document.querySelector("dialog[open]")&&!document.activeElement?.matches("input,select")&&!loading)refresh().catch(error=>toast(error.message,true));},60000);

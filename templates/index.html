@@ -32,6 +32,7 @@
     <button class="nav-item" data-tab="heating"><svg><use href="#i-heat"/></svg>난방</button>
     <button class="nav-item" data-tab="ventilation"><svg><use href="#i-fan"/></svg>환기</button>
     <button class="nav-item" data-tab="hybrid"><svg><use href="#i-shield"/></svg>주방 안전</button>
+    <button class="nav-item" data-tab="usage" aria-label="사용량"><svg><use href="#i-heat"/></svg>사용량</button>
     <div class="nav-divider"></div>
     <button class="nav-item" data-tab="schedules"><svg><use href="#i-clock"/></svg>예약 관리<span id="nav-job-count"></span></button>
     <button class="nav-item" data-tab="settings"><svg><use href="#i-settings"/></svg>연결 설정</button>
@@ -52,6 +53,36 @@
     <section class="device-section" data-section="heating"><div class="section-heading"><div><h2><svg><use href="#i-heat"/></svg>기분 좋은 온도</h2><p>각 방에 맞는 따뜻함을 설정하세요</p></div><span class="section-note">전원 · 외출 · 설정 온도</span></div><div id="heating-grid" class="heating-grid"></div></section>
     <section class="device-section" data-section="ventilation"><div class="section-heading"><div><h2><svg><use href="#i-fan"/></svg>쾌적한 공기의 흐름</h2><p>환기 모드와 풍량을 한곳에서</p></div><button class="text-button schedule-shortcut">시간 예약</button></div><div id="ventilation-grid"></div></section>
     <section class="device-section" data-section="hybrid"><div class="section-heading"><div><h2><svg><use href="#i-shield"/></svg>주방 안전 확인</h2><p>외출 전, 가스밸브와 쿡탑을 확인하세요</p></div><span class="section-note">차단 기능만 제공</span></div><div id="hybrid-grid" class="safety-grid"></div><div class="elevator-card"><span class="summary-icon neutral"><svg><use href="#i-lift"/></svg></span><div><h3>엘리베이터 호출</h3><p>나갈 준비가 됐다면, 집에서 편하게 호출하세요.</p></div><button class="button secondary" id="elevator">엘리베이터 호출</button></div></section>
+    <section id="usage-panel" hidden>
+      <div class="settings-card usage-card">
+        <h2>우리 집 에너지 사용량</h2><p>저장된 일별 확정값으로 집계합니다. 조회 시 선택한 항목의 당일과 최근 2일을 재수집합니다. 조회·집계 시점의 오늘과 어제는 20% 변동 검토에서 제외합니다. 그보다 과거인 날짜의 20% 이상 변동·누락·잘못된 값은 검토 후 반영합니다.</p>
+        <details><summary>수집 상태 · 검토 · 값 수정</summary>
+          <p>2023년부터 최초 수집 · 매일 한국 시간 03:00에 최근 완료된 3일 재조회 · 수정 원본과 이력 보존</p>
+          <p id="usage-sync-status" role="status">수집 상태를 확인하세요.</p>
+          <button id="usage-sync-status-button" class="button secondary" type="button">수집·검토 상태 새로고침</button>
+          <button id="usage-retry" class="button secondary" type="button">실패·빈 구간 재수집</button>
+          <button id="usage-export" class="button secondary" type="button">저장 데이터·이력 다운로드</button>
+          <h3>검토 대기 <small>최근 200건</small></h3><p id="usage-review-status" role="status"></p><div id="usage-reviews"></div>
+          <h3>일별 원본 이력과 직접 수정</h3>
+          <form id="usage-edit-form">
+            <p>위에서 선택한 사용량 항목에 적용합니다. 이력을 조회한 뒤 값을 수정하세요. 직접 수정한 값은 이후 자동 수집으로 덮어쓰지 않습니다.</p>
+            <label>날짜<input id="usage-edit-day" type="date" min="2023-01-01" required></label>
+            <button id="usage-history-button" type="button" class="button secondary">선택 날짜 이력 조회</button>
+            <div class="form-row"><label>확정 사용량<input id="usage-edit-value" type="number" min="0" max="1000000000000000" step="any" required></label><label>단위<input id="usage-edit-unit" maxlength="24" required></label></div>
+            <label>수정 사유<input id="usage-edit-reason" maxlength="500" required></label>
+            <button id="usage-edit-save" class="button primary" type="submit" disabled>수정값 저장</button>
+          </form><p id="usage-edit-status" role="status"></p><div id="usage-history"></div>
+        </details>
+        <form id="usage-form">
+          <div class="form-row"><label>항목<select id="usage-category"><option value="Electricity">전기</option><option value="Water">수도</option><option value="Heating">난방</option><option value="Hotwater">온수</option><option value="Gas">가스</option></select></label><label>조회 방식<select id="usage-period"><option value="Day">일별</option><option value="Month">월별</option></select></label></div>
+          <div class="form-row"><label id="usage-month-label">조회 월<input id="usage-month" type="month" min="2023-01" required></label><label id="usage-year-label" hidden>조회 연도<input id="usage-year" type="number" min="2023" step="1"></label></div>
+          <label class="checkbox-label"><input id="usage-compare" type="checkbox">전년 같은 기간과 비교</label>
+          <button id="usage-submit" class="button primary" type="submit">사용량 조회</button>
+        </form>
+        <p id="usage-status" role="status" aria-live="polite">아직 조회하지 않았습니다.</p>
+        <div id="usage-result"></div>
+      </div>
+    </section>
     <section id="schedules-panel" hidden>
       <div class="section-heading"><div><h2>타이머</h2><p>원하는 시간 뒤 여러 기기의 동작을 순서대로 실행합니다.</p></div><button class="button primary schedule-shortcut" data-kind="timer">타이머 추가</button></div>
       <div id="timers-list" class="jobs-list"></div>
@@ -71,7 +102,7 @@
     <footer><span>KDOne <b>HOME</b><span class="footer-divider">|</span>나의 공간을 더 편안하게</span><span id="last-update">상태 조회 대기</span></footer>
   </main>
 </div>
-<dialog id="admin-dialog"><form id="admin-form"><div class="modal-icon"><svg><use href="#i-home"/></svg></div><div class="eyebrow">WELCOME HOME</div><h2>우리 집 관리에 로그인</h2><p>NAS에 설정한 관리자 비밀번호를 입력하세요.</p><label>관리자 비밀번호<input type="password" id="admin-password" autocomplete="current-password" required minlength="8"></label><p class="form-error" id="admin-error" role="alert"></p><button class="button primary full" type="submit">로그인</button></form></dialog>
+<dialog id="admin-dialog"><form id="admin-form"><div class="modal-icon"><svg><use href="#i-home"/></svg></div><div class="eyebrow">WELCOME HOME</div><h2>우리 집 관리에 로그인</h2><p id="pin-help">키보드 또는 보안키패드로 PIN 6자리를 입력하세요.</p><input type="password" id="admin-pin" aria-label="6자리 관리자 PIN" aria-describedby="pin-help" autocomplete="off" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required><div id="pin-keypad" class="pin-keypad" role="group" aria-label="숫자 보안키패드"></div><p class="form-error" id="admin-error" role="alert"></p><button id="admin-submit" class="button primary full" type="submit" disabled>로그인</button></form></dialog>
 <dialog id="connect-dialog">
   <button class="modal-close" data-close="connect-dialog" aria-label="닫기"><svg><use href="#i-close"/></svg></button>
   <div class="eyebrow">CONNECT YOUR HOME</div><h2>월패드로 기기 연결</h2><p>기존 NAVIEN Home Network 계정을 사용합니다.</p>

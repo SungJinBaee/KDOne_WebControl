@@ -9,6 +9,13 @@ from schedules import Schedules
 from webapp import create_app
 
 
+@pytest.fixture(autouse=True)
+def isolated_config(tmp_path, monkeypatch):
+    monkeypatch.setenv("KDONE_CONFIG_DIR", str(tmp_path / "config"))
+    for key in ("WEB_ADMIN_PIN", "WEB_SECRET_KEY", "WEB_SECURE_COOKIE"):
+        monkeypatch.delenv(key, raising=False)
+
+
 @pytest.fixture
 def app(tmp_path):
     app = create_app({"TESTING": True, "DEMO": True, "START_SCHEDULER": False, "DATA_DIR": str(tmp_path)})
@@ -26,12 +33,12 @@ def post(client, path, payload):
 
 
 def test_admin_authentication_and_csrf(tmp_path):
-    app = create_app({"TESTING": True, "DEMO": False, "ADMIN_PASSWORD": "long-test-password", "START_SCHEDULER": False, "DATA_DIR": str(tmp_path)})
+    app = create_app({"TESTING": True, "DEMO": False, "ADMIN_PIN": "012345", "START_SCHEDULER": False, "DATA_DIR": str(tmp_path)})
     client = app.test_client()
     assert client.get("/api/state").status_code == 401
-    assert client.post("/api/login", json={"password": "long-test-password"}).status_code == 403
-    assert post(client, "/api/login", {"password": "wrong-password"}).status_code == 401
-    assert post(client, "/api/login", {"password": "long-test-password"}).status_code == 200
+    assert client.post("/api/login", json={"pin": "012345"}).status_code == 403
+    assert post(client, "/api/login", {"pin": "wrong-password"}).status_code == 401
+    assert post(client, "/api/login", {"pin": "012345"}).status_code == 200
     assert client.get("/api/state").status_code == 200
     assert client.post("/api/control", json={"confirm": True}).status_code == 403
     assert post(client, "/api/logout", {}).status_code == 200
@@ -40,11 +47,11 @@ def test_admin_authentication_and_csrf(tmp_path):
 
 
 def test_login_rate_limit(tmp_path):
-    app = create_app({"TESTING": True, "DEMO": False, "ADMIN_PASSWORD": "long-test-password", "START_SCHEDULER": False, "DATA_DIR": str(tmp_path)})
+    app = create_app({"TESTING": True, "DEMO": False, "ADMIN_PIN": "012345", "START_SCHEDULER": False, "DATA_DIR": str(tmp_path)})
     client = app.test_client()
     for _ in range(10):
-        assert post(client, "/api/login", {"password": "bad"}).status_code == 401
-    assert post(client, "/api/login", {"password": "long-test-password"}).status_code == 429
+        assert post(client, "/api/login", {"pin": "bad"}).status_code == 401
+    assert post(client, "/api/login", {"pin": "012345"}).status_code == 429
     app.extensions["jobs"].close()
 
 
@@ -239,14 +246,33 @@ def test_immediate_timer_and_missing_time(app):
     assert any(row["status"] == "done" for row in jobs.list())
 
 
-def test_admin_password_minimum_eight_characters(tmp_path):
+def test_admin_pin_requires_exactly_six_digits(tmp_path):
     config = {"TESTING": True, "DEMO": False, "START_SCHEDULER": False,
               "DATA_DIR": str(tmp_path), "CONFIG_DIR": str(tmp_path / "config")}
     with pytest.raises(RuntimeError):
-        create_app({**config, "ADMIN_PASSWORD": "1234567"})
-    app = create_app({**config, "ADMIN_PASSWORD": "12345678"})
+        create_app({**config, "ADMIN_PIN": "1234567"})
+    app = create_app({**config, "ADMIN_PIN": "012345"})
     try:
-        assert post(app.test_client(), "/api/login", {"password": "12345678"}).status_code == 200
+        assert post(app.test_client(), "/api/login", {"pin": "012345"}).status_code == 200
+    finally:
+        app.extensions["jobs"].close()
+
+
+@pytest.mark.parametrize("pin", ["12345", "1234567", "abcdef", "１２３４５６", 123456, None])
+def test_invalid_pin_config(tmp_path, pin):
+    with pytest.raises(RuntimeError):
+        create_app({"DEMO": False, "ADMIN_PIN": pin, "START_SCHEDULER": False,
+                    "CONFIG_DIR": str(tmp_path), "DATA_DIR": str(tmp_path)})
+
+
+def test_pin_rejects_old_password_and_invalid_inputs(tmp_path):
+    app = create_app({"TESTING": True, "DEMO": False, "ADMIN_PIN": "012345",
+                      "START_SCHEDULER": False, "DATA_DIR": str(tmp_path)})
+    try:
+        client = app.test_client()
+        for payload in ({"password": "012345"}, {"pin": 12345}, {"pin": "１２３４５６"}, {"pin": "012345 "}):
+            assert post(client, "/api/login", payload).status_code == 401
+        assert post(client, "/api/login", {"pin": "012345"}).status_code == 200
     finally:
         app.extensions["jobs"].close()
 
